@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Local symlinks / generated assets (see README)
+pre_extracted_class_feat/
+
+# Experiment outputs
+wandb/
+scripts/logs/
+scripts/figures/
+*.png
+*.csv
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp

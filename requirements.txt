@@ -1,0 +1,25 @@
+# vMFcache dependencies (tested with Python 3.10+, CUDA 12.4)
+# Install PyTorch first if you need a specific CUDA build:
+#   pip install torch==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu124
+# Then install the rest:
+#   pip install -r requirements.txt
+
+# Core
+numpy==2.2.5
+scipy==1.15.3
+tqdm==4.68.3
+wandb==0.28.0
+
+# CLIP (vendored under clip/, runtime deps only)
+pillow==12.2.0
+ftfy==6.3.1
+regex==2026.6.28
+
+# PyTorch (adjust index / versions for your CUDA setup)
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.5.1
+torchvision==0.20.1
+
+# Optional: --cache_tsne_viz
+matplotlib==3.10.9
+scikit-learn==1.7.2
