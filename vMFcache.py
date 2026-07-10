@@ -229,13 +229,13 @@ def compute_mixture_posterior(features, mus, var_diag, vecs, labels, prior, cls_
     logpL = -0.5 * (log_det.unsqueeze(0) + maha)
     P_L = torch.softmax(logpL, dim=1)
 
-    if getattr(args, 'var_aligned_tau', False) and class_kappa is not None:
+    if getattr(args, 'var_aligned_kappa', False) and class_kappa is not None:
         logpS = compute_vmf_logprob(
             features, vecs, labels, cls_num, class_kappa=class_kappa)
-        P_S = _safe_softmax_rows(logpS / args.tau, dim=1)
+        P_S = _safe_softmax_rows(logpS / args.ps_temperature, dim=1)
     else:
         class_kappa = None
-        kappa_default = 1.0 / args.tau
+        kappa_default = 1.0 / args.kappa_tau
         logpS = compute_vmf_logprob(
             features, vecs, labels, cls_num, kappa_default=kappa_default)
         P_S = _safe_softmax_rows(logpS, dim=1)
@@ -264,7 +264,7 @@ def compute_mixture_posterior(features, mus, var_diag, vecs, labels, prior, cls_
         'post_max': post.max(1).values.detach().cpu(),
         'D_M': D_M.detach().cpu(),
     }
-    if getattr(args, 'var_aligned_tau', False) and class_kappa is not None:
+    if getattr(args, 'var_aligned_kappa', False) and class_kappa is not None:
         mix_diag['kappa_c'] = class_kappa.detach().cpu().float()
         dim = features.shape[1]
         kappa_np = class_kappa.detach().cpu().numpy()
@@ -285,18 +285,6 @@ def compute_mixture_posterior(features, mus, var_diag, vecs, labels, prior, cls_
 def fuse_with_clip(clip_logits, log_mix, scale):
     """ADAPT-style multiplicative fusion: clip_logits * exp(log_mix / scale)."""
     return clip_logits * torch.exp(log_mix / scale)
-
-
-@torch.no_grad()
-def perturbation_entropy(features, clip_weights, noise_std, n_perturb):
-    """Mean CLIP entropy under feature-space Gaussian perturbations. features: [B, D] -> [B]."""
-    B, D = features.shape
-    noise = torch.randn(B, n_perturb, D, device=features.device) * noise_std
-    zt = features.unsqueeze(1) + noise
-    zt = zt / zt.norm(dim=-1, keepdim=True)
-    logits = 100. * zt.float() @ clip_weights.float()
-    ent = calculate_batch_entropy(logits.reshape(B * n_perturb, -1)).view(B, n_perturb)
-    return ent.mean(1)
 
 
 @torch.no_grad()
@@ -476,7 +464,7 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
         'above_delta_high_seen': 0, 'above_delta_high_admitted': 0,
     }
     vmf_tracker = None
-    if getattr(args, 'var_aligned_tau', False):
+    if getattr(args, 'var_aligned_kappa', False):
         vmf_tracker = OnlineVmfDispersionTracker(cls_num, dim, mean.device)
 
     cache_tsne_viz = getattr(args, 'cache_tsne_viz', False)
@@ -495,9 +483,8 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
         targets = targets.cuda()
         B = targets.size(0)
 
-        pert_ent = perturbation_entropy(features, clip_weights, args.noise_std, args.n_perturb)
         if diag is not None:
-            diag['entropy_all'].append(pert_ent.detach().cpu())
+            diag['entropy_all'].append(losses.detach().cpu())
 
         if var_diag is not None and dm_tracker is not None:
             dm_batch = compute_dm_to_pred(features, mean, var_diag, preds)
@@ -519,7 +506,7 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
                     before_slot = cache[0][start_slot:start_slot + args.bank_size].clone()
 
             update_sign, cache, added_sample = update_knowledge_banks(
-                cache, [pred_j, features[j:j + 1], pert_ent[j], prob_maps[j:j + 1]],
+                cache, [pred_j, features[j:j + 1], losses[j], prob_maps[j:j + 1]],
                 args.bank_size, mean, var_diag, delta_low, delta_high, args.lambda_div,
                 args.div_floor, no_delta_high_gate=args.no_delta_high_gate,
                 admit_stats=admit_stats, diag=diag)
@@ -548,7 +535,7 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
                 R, weight = vmf_tracker.mean_resultant()
                 kappa_fb = getattr(args, 'kappa_fallback', 2000.0)
                 class_kappa, _ = class_kappa_from_dispersion(
-                    R, weight, features.shape[1], args.tau_disp_min_weight,
+                    R, weight, features.shape[1], args.kappa_disp_min_weight,
                     kappa_fallback=kappa_fb)
                 class_kappa = class_kappa.float()
                 vmf_disp_diag = {
@@ -590,7 +577,7 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
     if diag is not None:
         print(f"\n=== Admission diagnostics ({dataset_name}) ===")
         ent_all = torch.cat(diag['entropy_all']) if diag['entropy_all'] else torch.empty(0)
-        _report_stats('perturbation_entropy (all samples)', ent_all)
+        _report_stats('clip_entropy (all samples)', ent_all)
         print(f"[admission] admitted={diag['admit_count']} gate_rejected={diag.get('gate_reject', 0)}")
 
         if dm_tracker is not None:
@@ -637,7 +624,7 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
             _report_stats('P_S.max', torch.cat([b['P_S_max'] for b in mix_diag_batches]))
             _report_stats('post.max', torch.cat([b['post_max'] for b in mix_diag_batches]))
             _report_stats('D_M (mixture batch)', torch.cat([b['D_M'] for b in mix_diag_batches]))
-            if args.var_aligned_tau and mix_diag_batches and 'kappa_c' in mix_diag_batches[0]:
+            if args.var_aligned_kappa and mix_diag_batches and 'kappa_c' in mix_diag_batches[0]:
                 valid_kappa = torch.cat([b['kappa_c'] for b in mix_diag_batches])
                 valid_kappa = valid_kappa[~torch.isnan(valid_kappa)]
                 if valid_kappa.numel() > 0:
@@ -738,18 +725,20 @@ if __name__ == '__main__':
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--bank_size', type=int, default=16, help="Bank Size L")
     parser.add_argument('--alpha', type=float, default=0.9, help="the alpha for EMA")
-    parser.add_argument('--batch_size', type=int, default=32, help='DataLoader batch size for online evaluation')
+    parser.add_argument('--batch_size', type=int, default=1, help='DataLoader batch size for online evaluation')
     parser.add_argument('--gpu', type=int, default=0, help='GPU device id')
 
     ### Bayesian mixture hyper-parameters
-    parser.add_argument('--tau', type=float, default=0.01,
-                        help='fixed path: kappa=1/tau in vMF; var_aligned: global P_S calibration (logpS/tau)')
-    parser.add_argument('--var_aligned_tau', action='store_true', default=False,
-                        help='per-class MLE kappa from soft-label dispersion + global logpS/tau calibration')
-    parser.add_argument('--tau_disp_min_weight', type=float, default=2.0,
+    parser.add_argument('--kappa_tau', type=float, default=0.01,
+                        help='fixed-kappa path: vMF concentration kappa=1/kappa_tau')
+    parser.add_argument('--ps_temperature', type=float, default=175.0,
+                        help='var_aligned_kappa path: P_S = softmax(logpS / ps_temperature)')
+    parser.add_argument('--var_aligned_kappa', action='store_true', default=False,
+                        help='per-class MLE kappa from soft-label dispersion + ps_temperature calibration')
+    parser.add_argument('--kappa_disp_min_weight', type=float, default=2.0,
                         help='min soft-label weight before MLE kappa for a class (else kappa_fallback)')
     parser.add_argument('--kappa_fallback', type=float, default=2000.0,
-                        help='var_aligned: kappa for classes with insufficient soft-label weight')
+                        help='var_aligned_kappa: kappa for classes with insufficient soft-label weight')
     parser.add_argument('--eta', type=float, default=0.75, help="gamma(z) scale factor")
     parser.add_argument('--rho', type=float, default=2.0, help="gamma(z) exponent")
     parser.add_argument('--chi2_low', type=float, default=0.05, help="lower empirical quantile for safe annulus")
@@ -758,9 +747,7 @@ if __name__ == '__main__':
                         help="min D_M samples before empirical annulus gate activates")
     parser.add_argument('--no_delta_high_gate', action='store_true', default=False,
                         help="disable upper D_M bound in admission gate (keep delta_low only)")
-    parser.add_argument('--noise_std', type=float, default=0.01, help="feature-space perturbation std for quality check")
-    parser.add_argument('--n_perturb', type=int, default=8, help="number of perturbations for quality check")
-    parser.add_argument('--lambda_div', type=float, default=1.5,
+    parser.add_argument('--lambda_div', type=float, default=1.0,
                         help='diversity penalty weight on max(0, max_cos_sim - div_floor)')
     parser.add_argument('--div_floor', type=float, default=0.5,
                         help='cosine similarity floor subtracted before diversity penalty')
