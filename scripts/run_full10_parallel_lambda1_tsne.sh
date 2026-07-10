@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Parallel full FG10 eval + cache t-SNE (lambda_div=1).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+mkdir -p scripts/logs scripts/figures
+
+PY=/home/liangyiwen/miniconda3/envs/adapt/bin/python
+ts=$(date +%Y%m%d_%H%M%S)
+META="scripts/logs/full10_parallel_lambda1_tsne_${ts}.txt"
+: > "${META}"
+
+# Skip GPU 3 (typically occupied).
+GPUS=(0 1 2 4 5 6 7)
+DATASETS=(
+  fgvc_aircraft caltech101 stanford_cars dtd eurosat
+  oxford_flowers food101 oxford_pets sun397 ucf101
+)
+
+COMMON=(
+  --data /home/liangyiwen/datasets
+  --arch ViT-B/16
+  --bank_size 16
+  --alpha 0.9
+  --class_type Custom
+  --GPT
+  --var_aligned_kappa
+  --ps_temperature 175
+  --eta 0.75
+  --rho 2.0
+  --chi2_low 0.05
+  --chi2_high 0.95
+  --annulus_min_samples 200
+  --lambda_div 1.0
+  --div_floor 0.5
+  --clip_weight 1.0
+  --cache_tsne_viz
+  --cache_tsne_max_classes 10
+  --cache_tsne_max_bg 4000
+)
+
+run_one() {
+  local gpu="$1"
+  local ds="$2"
+  local log="scripts/logs/parallel_lambda1_tsne_${ds}_gpu${gpu}_${ts}.log"
+  local out="scripts/figures/cache_tsne_${ds}_bs16_lambda1.png"
+  echo "[launch] GPU${gpu} ${ds} -> ${log}" | tee -a "${META}"
+  env PYTHONUNBUFFERED=1 WANDB_MODE=disabled MPLBACKEND=Agg "${PY}" ./vMFcache.py \
+    "${COMMON[@]}" \
+    --gpu "${gpu}" \
+    --test_set "${ds}" \
+    --cache_tsne_output "${out}" \
+    > "${log}" 2>&1
+  local acc
+  acc=$(grep -E "^${ds}:" "${log}" | tail -1 | awk '{print $2}' || echo "NA")
+  echo "[done] GPU${gpu} ${ds} acc=${acc}" | tee -a "${META}"
+}
+
+max_jobs=${#GPUS[@]}
+gpu_idx=0
+
+for ds in "${DATASETS[@]}"; do
+  while (( $(jobs -r -p | wc -l) >= max_jobs )); do
+    wait -n
+  done
+  gpu="${GPUS[$gpu_idx]}"
+  gpu_idx=$(( (gpu_idx + 1) % max_jobs ))
+  run_one "${gpu}" "${ds}" &
+  echo "${ds} ${gpu} $! ${ts}" >> "${META}.jobs"
+done
+
+wait
+echo "=== Summary ===" | tee -a "${META}"
+sum=0
+n=0
+for ds in "${DATASETS[@]}"; do
+  log=$(ls scripts/logs/parallel_lambda1_tsne_${ds}_gpu*_${ts}.log 2>/dev/null | head -1)
+  acc="NA"
+  if [[ -f "${log}" ]]; then
+    acc=$(grep -E "^${ds}:" "${log}" | tail -1 | awk '{print $2}' || true)
+  fi
+  echo "${ds}: ${acc}" | tee -a "${META}"
+  if [[ -n "${acc}" && "${acc}" != "NA" ]]; then
+    sum=$(python3 -c "print(${sum}+float('${acc}'))")
+    n=$((n + 1))
+  fi
+done
+if (( n > 0 )); then
+  avg=$(python3 -c "print(round(${sum}/${n}, 2))")
+  echo "Average: ${avg}" | tee -a "${META}"
+fi
+echo "meta=${META}"
