@@ -64,11 +64,6 @@ def max_redundancy_from_sim(sim):
     return offdiag.max(dim=1).values
 
 
-def shifted_redundancy(max_sim, div_floor):
-    """max(0, max_cos_sim - div_floor); diversity penalty input before lambda_div."""
-    return (max_sim - div_floor).clamp(min=0.0)
-
-
 class OnlineVmfDispersionTracker:
     """Online weighted mean resultant length per class from CLIP soft labels."""
 
@@ -335,7 +330,7 @@ def param_estimation(added_sample, banks, initial_mean, prev_mus, alpha, ridge_e
 
 
 def update_knowledge_banks(banks, sample, bank_size, mus, var_diag,
-                           delta_low, delta_high, lambda_div, div_floor,
+                           delta_low, delta_high, lambda_div,
                            no_delta_high_gate=False, admit_stats=None, diag=None):
     """Admission: Mahalanobis safe-annulus hard gate + diversity-aware union scoring.
 
@@ -371,9 +366,7 @@ def update_knowledge_banks(banks, sample, bank_size, mus, var_diag,
     if diag is not None and existing_count >= 1:
         existing_vecs = cache_vecs[start_idx:start_idx + existing_count]
         cand_max_red = (feature[0] @ existing_vecs.T).max()
-        cand_shifted = shifted_redundancy(cand_max_red, div_floor)
         diag['redundancy_cand'].append(cand_max_red.detach().cpu().view(1))
-        diag['shifted_redundancy_cand'].append(cand_shifted.detach().cpu().view(1))
         diag['entropy_cand'].append(e.detach().cpu().view(1))
 
     # 2a. not full: append
@@ -394,12 +387,10 @@ def update_knowledge_banks(banks, sample, bank_size, mus, var_diag,
     sim = union_vecs @ union_vecs.T                              # [L+1, L+1]
     m = union_vecs.shape[0]
     max_red = max_redundancy_from_sim(sim)
-    shifted_red = shifted_redundancy(max_red, div_floor)
-    score = -union_ent - lambda_div * shifted_red
+    score = -union_ent - lambda_div * max_red
     if diag is not None:
         diag['entropy_union'].append(union_ent.detach().cpu())
         diag['redundancy_union'].append(max_red.detach().cpu())
-        diag['shifted_redundancy_union'].append(shifted_red.detach().cpu())
     evict_local = int(score.argmin().item())
     if evict_local == bank_size:
         return False, [cache_vecs, cache_labels, cache_pro, cache_loss], None
@@ -452,9 +443,8 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
     diag = None
     if getattr(args, 'diag_stats', False):
         diag = {
-            'entropy_all': [], 'entropy_union': [], 'redundancy_union': [],
-            'shifted_redundancy_union': [],
-            'entropy_cand': [], 'redundancy_cand': [], 'shifted_redundancy_cand': [],
+            'entropy_all': [],             'entropy_union': [], 'redundancy_union': [],
+            'entropy_cand': [], 'redundancy_cand': [],
             'gamma': [], 'P_L_max': [], 'P_S_max': [], 'post_max': [], 'D_M_batch': [],
             'gate_reject': 0, 'admit_count': 0,
         }
@@ -508,7 +498,7 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
             update_sign, cache, added_sample = update_knowledge_banks(
                 cache, [pred_j, features[j:j + 1], losses[j], prob_maps[j:j + 1]],
                 args.bank_size, mean, var_diag, delta_low, delta_high, args.lambda_div,
-                args.div_floor, no_delta_high_gate=args.no_delta_high_gate,
+                no_delta_high_gate=args.no_delta_high_gate,
                 admit_stats=admit_stats, diag=diag)
             if cache_tsne_viz:
                 if update_sign:
@@ -591,28 +581,24 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
         if diag['redundancy_cand']:
             ec = torch.cat(diag['entropy_cand'])
             rc = torch.cat(diag['redundancy_cand'])
-            rsc = torch.cat(diag['shifted_redundancy_cand'])
             _, ec_std = _report_stats('entropy (candidates, >=1 same-class member)', ec)
-            _report_stats('max_redundancy (candidate vs existing same-class)', rc)
-            _, rsc_std = _report_stats('shifted_redundancy (candidate vs existing same-class)', rsc)
+            _, rc_std = _report_stats('max_redundancy (candidate vs existing same-class)', rc)
             print(f"[hint] #admission decisions with existing members={rc.numel()}")
-            if ec_std > 0 and rsc_std > 0:
-                print(f"[hint] lambda_div * std(shifted_red) / std(entropy) = "
-                      f"{args.lambda_div * rsc_std / ec_std:.4f} (should be << 1 for entropy dominance)")
+            if ec_std > 0 and rc_std > 0:
+                print(f"[hint] lambda_div * std(redundancy) / std(entropy) = "
+                      f"{args.lambda_div * rc_std / ec_std:.4f} (should be << 1 for entropy dominance)")
         else:
             print("[diag] no admission decision had an existing same-class member yet.")
 
         if diag['entropy_union']:
             eu = torch.cat(diag['entropy_union'])
             ru = torch.cat(diag['redundancy_union'])
-            rsu = torch.cat(diag['shifted_redundancy_union'])
             _, eu_std = _report_stats('entropy (union @ full-bank decisions)', eu)
-            _report_stats('max_redundancy (union @ full-bank decisions)', ru)
-            _, rsu_std = _report_stats('shifted_redundancy (union @ full-bank decisions)', rsu)
+            _, ru_std = _report_stats('max_redundancy (union @ full-bank decisions)', ru)
             print(f"[hint] #full-bank comparisons={len(diag['entropy_union'])}")
-            if eu_std > 0 and rsu_std > 0:
-                print(f"[hint] lambda_div * std(shifted_red) / std(entropy) @ full-bank = "
-                      f"{args.lambda_div * rsu_std / eu_std:.4f} (should be << 1 for entropy dominance)")
+            if eu_std > 0 and ru_std > 0:
+                print(f"[hint] lambda_div * std(redundancy) / std(entropy) @ full-bank = "
+                      f"{args.lambda_div * ru_std / eu_std:.4f} (should be << 1 for entropy dominance)")
         else:
             print("[diag] bank never reached full capacity; no full-bank eviction comparisons recorded.")
 
@@ -748,9 +734,7 @@ if __name__ == '__main__':
     parser.add_argument('--no_delta_high_gate', action='store_true', default=False,
                         help="disable upper D_M bound in admission gate (keep delta_low only)")
     parser.add_argument('--lambda_div', type=float, default=1.0,
-                        help='diversity penalty weight on max(0, max_cos_sim - div_floor)')
-    parser.add_argument('--div_floor', type=float, default=0.5,
-                        help='cosine similarity floor subtracted before diversity penalty')
+                        help='diversity penalty weight on max pairwise cosine similarity')
     parser.add_argument('--clip_weight', type=float, default=1.0, help="CLIP zero-shot ensemble weight")
     parser.add_argument('--diag_stats', action='store_true', default=False, help="collect entropy/redundancy admission statistics")
     parser.add_argument('--cache_tsne_viz', action='store_true', default=False,

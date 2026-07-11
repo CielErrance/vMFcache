@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Parse ps_temperature, eta, or rho sweep logs into CSV.
-# Usage: bash scripts/parse_hp_sweep_results.sh {ps_temperature|eta|eta_ps40|rho} <timestamp>
+# Parse hyperparameter sweep logs into CSV.
+# Usage: bash scripts/parse_hp_sweep_results.sh {ps_temperature|eta|eta_ps40|rho|annulus_min_samples} <timestamp>
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 MODE="${1:-}"
 TS="${2:-}"
 if [[ -z "${MODE}" || -z "${TS}" ]]; then
-  echo "Usage: $0 {ps_temperature|eta|eta_ps40|rho} <timestamp>"
+  echo "Usage: $0 {ps_temperature|eta|eta_ps40|rho|annulus_min_samples} <timestamp>"
   exit 1
 fi
 
@@ -29,6 +29,11 @@ elif [[ "${MODE}" == "rho" ]]; then
   BASELINE_VAL="2"
   PREFIX="sweep_rho_r"
   COL="rho"
+elif [[ "${MODE}" == "annulus_min_samples" ]]; then
+  BASELINE_AVG=70.54
+  BASELINE_VAL="200"
+  PREFIX="sweep_annulus_min_n"
+  COL="annulus_min_samples"
 fi
 
 shopt -s nullglob
@@ -50,6 +55,8 @@ for log in "${logs[@]}"; do
     val=$(echo "${base}" | sed -n 's/sweep_rho_r\([0-9p]*\)_gpu.*/\1/p' | tr 'p' '.')
   elif [[ "${MODE}" == "eta_ps40" ]]; then
     val=$(echo "${base}" | sed -n 's/sweep_eta_ps40_e\([0-9p]*\)_gpu.*/\1/p' | tr 'p' '.')
+  elif [[ "${MODE}" == "annulus_min_samples" ]]; then
+    val=$(echo "${base}" | sed -n 's/sweep_annulus_min_n\([0-9]*\)_gpu.*/\1/p')
   else
     val=$(echo "${base}" | sed -n 's/sweep_eta_e\([0-9p]*\)_gpu.*/\1/p' | tr 'p' '.')
   fi

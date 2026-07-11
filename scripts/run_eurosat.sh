@@ -22,5 +22,4 @@ env PYTHONUNBUFFERED=1 WANDB_MODE=disabled "${PY}" ./vMFcache.py \
   --chi2_low 0.05 \
   --chi2_high 0.95 \
   --annulus_min_samples 200 \
-  --div_floor 0.5 \
   --clip_weight 1.0

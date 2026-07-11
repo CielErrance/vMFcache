@@ -47,7 +47,7 @@ fewshot_datasets = ['dtd', 'oxford_flowers', 'food101', 'stanford_cars', 'sun397
                 'fgvc_aircraft', 'oxford_pets', 'caltech101', 'ucf101', 'eurosat',
                 'caltech256', 'cub', 'birdsnap']
 
-def build_fewshot_dataset(set_id, root, transform, mode='train', n_shot=None):
+def build_fewshot_dataset(set_id, root, transform, mode='test', n_shot=None):
 
     path_dict = {
         "oxford_flowers": ["jpg", root + "/split_zhou_OxfordFlowers.json"],

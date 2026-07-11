@@ -31,7 +31,6 @@ COMMON=(
   --chi2_high 0.95
   --annulus_min_samples 200
   --lambda_div 1.0
-  --div_floor 0.5
   --clip_weight 1.0
   --cache_tsne_viz
   --cache_tsne_max_classes 10

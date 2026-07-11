@@ -19,7 +19,8 @@ ID_to_DIRNAME = {
 def build_test_loader(set_id, transform, data_root, batch_size):
     if set_id in fewshot_datasets:
         testset = build_fewshot_dataset(
-            set_id, os.path.join(data_root, ID_to_DIRNAME[set_id.lower()]), transform)
+            set_id, os.path.join(data_root, ID_to_DIRNAME[set_id.lower()]), transform,
+            mode='test')
     else:
         raise NotImplementedError(f"unsupported dataset: {set_id}")
     val_loader = torch.utils.data.DataLoader(

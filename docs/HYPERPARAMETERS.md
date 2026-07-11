@@ -143,12 +143,11 @@ D_M < \delta_{\text{low}} \quad \text{或} \quad D_M > \delta_{\text{high}}\ (\t
 当类 \(\hat{c}\) 的 cache 已满，在「现有 \(L\) 个 + 候选」共 \(L{+}1\) 个成员上计算：
 
 \[
-r_i = \max_{j\neq i} \cos(\mathbf{u}_i, \mathbf{u}_j), \qquad
-\tilde{r}_i = \max(0,\ r_i - \tau_{\text{div}})
+r_i = \max_{j\neq i} \cos(\mathbf{u}_i, \mathbf{u}_j)
 \]
 
 \[
-s_i = -e_i - \lambda_{\text{div}}\,\tilde{r}_i
+s_i = -e_i - \lambda_{\text{div}}\, r_i
 \]
 
 淘汰 \(s_i\) **最小**的成员；若候选得分最低则拒绝准入。
@@ -156,7 +155,6 @@ s_i = -e_i - \lambda_{\text{div}}\,\tilde{r}_i
 | 参数 | 默认值 | 含义 |
 |------|--------|------|
 | `--lambda_div` | `1.0` | 多样性惩罚权重 \(\lambda_{\text{div}}\) |
-| `--div_floor` | `0.5` | 余弦相似度地板 \(\tau_{\text{div}}\)（\(\tilde{r}=\max(0,r-\tau_{\text{div}})\)） |
 
 ---
 
@@ -302,7 +300,7 @@ flowchart TB
 
     subgraph admit [准入]
         Annulus["环带门控\nchi2_low/high, annulus_min_samples\nno_delta_high_gate"]
-        Score["满 bank 打分\nlambda_div, div_floor"]
+        Score["满 bank 打分\nlambda_div"]
         Bank["bank_size"]
     end
 
@@ -339,5 +337,5 @@ flowchart TB
 --var_aligned_kappa --ps_temperature 175 \
 --eta 0.75 --rho 2.0 \
 --chi2_low 0.05 --chi2_high 0.95 --annulus_min_samples 200 \
---lambda_div 1.0 --div_floor 0.5
+--lambda_div 1.0
 ```
