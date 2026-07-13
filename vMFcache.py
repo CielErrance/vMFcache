@@ -1,8 +1,7 @@
 """vMFcache: cache-based DQDA + vMF mixture TTA.
 
-Migrated from ADAPT_online_bayes_cache_dqda.py. DQDA parameters are updated via
-param_estimation() on each cache admission. Admission uses annulus hard gate +
-entropy/diversity union scoring.
+Migrated from ADAPT_online_bayes_cache_dqda.py. DQDA and var_aligned kappa are updated from
+cache admissions only (not all streaming batch samples).
 """
 import argparse
 import time
@@ -64,27 +63,24 @@ def max_redundancy_from_sim(sim):
     return offdiag.max(dim=1).values
 
 
-class OnlineVmfDispersionTracker:
-    """Online weighted mean resultant length per class from CLIP soft labels."""
+@torch.no_grad()
+def class_dispersion_from_cache(vecs, labels, cache_pro, cls_num):
+    """Per-class mean resultant R_c from cache members, soft-weighted by cache_pro[:, label] (DQDA-style)."""
+    K = cls_num
+    dim = vecs.shape[1]
+    device = vecs.device
+    sum_vec = torch.zeros(K, dim, device=device, dtype=vecs.dtype)
+    weight = torch.zeros(K, device=device, dtype=cache_pro.dtype)
+    if vecs.numel() == 0:
+        return torch.zeros(K, device=device, dtype=vecs.dtype), weight
 
-    def __init__(self, cls_num, dim, device):
-        self.cls_num = cls_num
-        self.sum_vec = torch.zeros(cls_num, dim, device=device)
-        self.weight = torch.zeros(cls_num, device=device)
-
-    @torch.no_grad()
-    def update(self, features, prob_maps):
-        """features [B,D], prob_maps [B,K] -> accumulate soft-label weighted sum."""
-        self.sum_vec += prob_maps.T @ features
-        self.weight += prob_maps.sum(dim=0)
-
-    @torch.no_grad()
-    def mean_resultant(self):
-        """Return R_c [K] and effective soft weight [K] (pre-update state)."""
-        w = self.weight.clamp(min=1e-12)
-        R = self.sum_vec.norm(dim=1) / w
-        R = torch.where(self.weight > 0, R, torch.zeros_like(R))
-        return R, self.weight.clone()
+    slot_w = cache_pro[torch.arange(labels.numel(), device=device), labels]
+    sum_vec.index_add_(0, labels, slot_w.unsqueeze(1) * vecs)
+    weight.index_add_(0, labels, slot_w)
+    w = weight.clamp(min=1e-12)
+    R = sum_vec.norm(dim=1) / w
+    R = torch.where(weight > 0, R, torch.zeros_like(R))
+    return R, weight
 
 
 def _A_d(kappa, dim):
@@ -439,6 +435,7 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
     cache = init_empty_banks(cls_num, args.bank_size, dim, mean.device)
     var_diag = None
     print('[dqda] cache-based param_estimation on each admission (alpha shrinkage to text prototype)')
+    print('[vmf] cache-based kappa from admitted cache soft labels (DQDA-style)')
     print('[bank] empty init (no text-prototype warm-start)')
     diag = None
     if getattr(args, 'diag_stats', False):
@@ -453,10 +450,6 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
         'admitted': 0, 'gate_reject': 0, 'gate_reject_high': 0,
         'above_delta_high_seen': 0, 'above_delta_high_admitted': 0,
     }
-    vmf_tracker = None
-    if getattr(args, 'var_aligned_kappa', False):
-        vmf_tracker = OnlineVmfDispersionTracker(cls_num, dim, mean.device)
-
     cache_tsne_viz = getattr(args, 'cache_tsne_viz', False)
     cache_sid = None
     tsne_feats = []
@@ -518,11 +511,13 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
             valid_mask = cache[1] != -1
             bank_vecs = cache[0][valid_mask]
             bank_labels = cache[1][valid_mask]
+            bank_pro = cache[2][valid_mask]
             gamma_delta_high = delta_high
             class_kappa = None
             vmf_disp_diag = None
-            if vmf_tracker is not None:
-                R, weight = vmf_tracker.mean_resultant()
+            if getattr(args, 'var_aligned_kappa', False):
+                R, weight = class_dispersion_from_cache(
+                    bank_vecs, bank_labels, bank_pro, cls_num)
                 kappa_fb = getattr(args, 'kappa_fallback', 2000.0)
                 class_kappa, _ = class_kappa_from_dispersion(
                     R, weight, features.shape[1], args.kappa_disp_min_weight,
@@ -541,9 +536,6 @@ def evaluation(val_loader, clip_weights, image_encoder, args, dataset_name):
                 mix_diag_batches.append(mix_diag)
         else:
             test_logits = clip_logits
-
-        if vmf_tracker is not None:
-            vmf_tracker.update(features, prob_maps)
 
         acc = accuracy(test_logits, targets, topk=(1,))
         top1.update(acc[0], B)

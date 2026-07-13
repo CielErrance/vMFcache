@@ -20,7 +20,7 @@ if [[ "${MODE}" == "eta" ]]; then
   PREFIX="sweep_eta_e"
   COL="eta"
 elif [[ "${MODE}" == "eta_ps40" ]]; then
-  BASELINE_AVG=70.54
+  BASELINE_AVG=70.29
   BASELINE_VAL="0.75"
   PREFIX="sweep_eta_ps40_e"
   COL="eta"
@@ -30,7 +30,7 @@ elif [[ "${MODE}" == "rho" ]]; then
   PREFIX="sweep_rho_r"
   COL="rho"
 elif [[ "${MODE}" == "annulus_min_samples" ]]; then
-  BASELINE_AVG=70.54
+  BASELINE_AVG=70.35
   BASELINE_VAL="200"
   PREFIX="sweep_annulus_min_n"
   COL="annulus_min_samples"
@@ -47,6 +47,8 @@ CSV="scripts/sweep_${MODE}_results_${TS}.csv"
 echo "dataset,${COL},accuracy,baseline_avg,delta_vs_baseline" > "${CSV}"
 
 declare -A val_acc
+declare -A val_sum
+declare -A val_cnt
 for log in "${logs[@]}"; do
   base=$(basename "${log}")
   if [[ "${MODE}" == "ps_temperature" ]]; then
@@ -54,9 +56,9 @@ for log in "${logs[@]}"; do
   elif [[ "${MODE}" == "rho" ]]; then
     val=$(echo "${base}" | sed -n 's/sweep_rho_r\([0-9p]*\)_gpu.*/\1/p' | tr 'p' '.')
   elif [[ "${MODE}" == "eta_ps40" ]]; then
-    val=$(echo "${base}" | sed -n 's/sweep_eta_ps40_e\([0-9p]*\)_gpu.*/\1/p' | tr 'p' '.')
+    val=$(echo "${base}" | sed -n 's/sweep_eta_ps40_e\([0-9p]*\).*/\1/p' | tr 'p' '.')
   elif [[ "${MODE}" == "annulus_min_samples" ]]; then
-    val=$(echo "${base}" | sed -n 's/sweep_annulus_min_n\([0-9]*\)_gpu.*/\1/p')
+    val=$(echo "${base}" | sed -n 's/sweep_annulus_min_n\([0-9]*\).*/\1/p')
   else
     val=$(echo "${base}" | sed -n 's/sweep_eta_e\([0-9p]*\)_gpu.*/\1/p' | tr 'p' '.')
   fi
@@ -75,14 +77,26 @@ for log in "${logs[@]}"; do
         acc="${line#*: }"
         acc="${acc// /}"
         echo "${ds},${val},${acc},${BASELINE_AVG}," >> "${CSV}"
+        if [[ "${MODE}" == "annulus_min_samples" || "${MODE}" == "eta_ps40" ]]; then
+          val_sum["${val}"]=$(python3 -c "print(${val_sum[${val}]:-0}+float('${acc}'))")
+          val_cnt["${val}"]=$(( ${val_cnt[${val}]:-0} + 1 ))
+        fi
       fi
     fi
   done < "${log}"
-  if [[ -n "${avg}" ]]; then
+  if [[ "${MODE}" != "annulus_min_samples" && "${MODE}" != "eta_ps40" && -n "${avg}" ]]; then
     val_acc["${val}"]="${avg}"
     echo "Average,${val},${avg},${BASELINE_AVG},$(awk -v a="${avg}" -v b="${BASELINE_AVG}" 'BEGIN{printf "%.2f", a-b}')" >> "${CSV}"
   fi
 done
+
+if [[ "${MODE}" == "annulus_min_samples" || "${MODE}" == "eta_ps40" ]]; then
+  for val in "${!val_sum[@]}"; do
+    avg=$(python3 -c "print(round(${val_sum[$val]}/${val_cnt[$val]}, 2))")
+    val_acc["${val}"]="${avg}"
+    echo "Average,${val},${avg},${BASELINE_AVG},$(awk -v a="${avg}" -v b="${BASELINE_AVG}" 'BEGIN{printf "%.2f", a-b}')" >> "${CSV}"
+  done
+fi
 
 echo "Wrote ${CSV}"
 echo "--- Average by ${COL} (baseline ${COL}=${BASELINE_VAL}, ref avg=${BASELINE_AVG}) ---"

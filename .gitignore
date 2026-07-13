@@ -6,7 +6,7 @@ dist/
 build/
 
 # Local symlinks / generated assets (see README)
-pre_extracted_class_feat/
+pre_extracted_class_feat
 
 # Experiment outputs
 wandb/

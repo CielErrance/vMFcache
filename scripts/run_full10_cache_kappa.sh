@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# FG10 eval with optimal hyperparams (default batch_size=1).
+# FG10 eval: cache-based vMF kappa (test split, optimal hyperparams).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p scripts/logs
 
 PY=/home/liangyiwen/miniconda3/envs/adapt/bin/python
 ts=$(date +%Y%m%d_%H%M%S)
-META="scripts/logs/full10_bs1_optimal_${ts}.txt"
+META="scripts/logs/full10_cache_kappa_${ts}.txt"
 : > "${META}"
 
 GPUS=(0 1 2 4 5 6 7)
@@ -33,12 +33,12 @@ COMMON=(
   --clip_weight 1.0
 )
 
-echo "FG10 test-split optimal ts=${ts} ps_temperature=40 eta=0.75 rho=2 batch_size=1" | tee -a "${META}"
+echo "FG10 cache-kappa ts=${ts} test-split ps_temperature=40 eta=0.75 rho=2 batch_size=1" | tee -a "${META}"
 
 run_one() {
   local gpu="$1"
   local ds="$2"
-  local log="scripts/logs/bs1_optimal_${ds}_gpu${gpu}_${ts}.log"
+  local log="scripts/logs/cache_kappa_${ds}_gpu${gpu}_${ts}.log"
   echo "[launch] GPU${gpu} ${ds} -> ${log}" | tee -a "${META}"
   env PYTHONUNBUFFERED=1 WANDB_MODE=disabled "${PY}" ./vMFcache.py \
     "${COMMON[@]}" \
@@ -68,7 +68,7 @@ echo "=== Summary ===" | tee -a "${META}"
 sum=0
 n=0
 for ds in "${DATASETS[@]}"; do
-  log=$(ls scripts/logs/bs1_optimal_${ds}_gpu*_${ts}.log 2>/dev/null | head -1)
+  log=$(ls scripts/logs/cache_kappa_${ds}_gpu*_${ts}.log 2>/dev/null | head -1)
   acc="NA"
   if [[ -f "${log}" ]]; then
     acc=$(grep -E "^${ds}:" "${log}" | tail -1 | awk '{print $2}' || true)
