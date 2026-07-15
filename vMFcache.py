@@ -719,12 +719,14 @@ if __name__ == '__main__':
                         help='var_aligned_kappa: kappa for classes with insufficient soft-label weight')
     parser.add_argument('--eta', type=float, default=0.75, help="gamma(z) scale factor")
     parser.add_argument('--rho', type=float, default=2.0, help="gamma(z) exponent")
-    parser.add_argument('--chi2_low', type=float, default=0.05, help="lower empirical quantile for safe annulus")
+    parser.add_argument('--chi2_low', type=float, default=0.0, help="lower empirical quantile for safe annulus")
     parser.add_argument('--chi2_high', type=float, default=0.95, help="upper empirical quantile for safe annulus")
     parser.add_argument('--annulus_min_samples', type=int, default=200,
                         help="min D_M samples before empirical annulus gate activates")
-    parser.add_argument('--no_delta_high_gate', action='store_true', default=False,
-                        help="disable upper D_M bound in admission gate (keep delta_low only)")
+    parser.add_argument('--no_delta_high_gate', action='store_true', default=True,
+                        help="disable upper D_M bound in admission gate (default: True / none)")
+    parser.add_argument('--use_delta_high_gate', action='store_false', dest='no_delta_high_gate',
+                        help="enable upper D_M bound using --chi2_high (overrides default none)")
     parser.add_argument('--lambda_div', type=float, default=1.0,
                         help='diversity penalty weight on max pairwise cosine similarity')
     parser.add_argument('--clip_weight', type=float, default=1.0, help="CLIP zero-shot ensemble weight")

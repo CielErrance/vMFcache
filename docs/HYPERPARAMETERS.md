@@ -113,7 +113,7 @@ D_M(\mathbf{z},\hat{c}) = \sqrt{\sum_{j=1}^{d} \frac{(z_j - \mu_{\hat{c},j})^2}{
 
 ### 5.2 经验分位数阈值
 
-在线收集历史 \(D_M\)，样本数 \(\geq N_{\min}\) 后激活环带：
+在线收集历史 \(D_M\)，样本数 \(\geq N_{\min}\) 后激活：
 
 \[
 \delta_{\text{low}} = Q_{q_{\text{low}}}(D_M), \qquad
@@ -122,21 +122,26 @@ D_M(\mathbf{z},\hat{c}) = \sqrt{\sum_{j=1}^{d} \frac{(z_j - \mu_{\hat{c},j})^2}{
 
 | 参数 | 默认值 | 含义 |
 |------|--------|------|
-| `--chi2_low` | `0.05` | 下分位数 \(q_{\text{low}}\)（历史命名，现为经验分位数） |
-| `--chi2_high` | `0.95` | 上分位数 \(q_{\text{high}}\) |
+| `--chi2_low` | `0.0` | 下分位数 \(q_{\text{low}}\)（历史命名，现为经验分位数） |
+| `--chi2_high` | `0.95` | 上分位数 \(q_{\text{high}}\)：默认**不参与准入硬门控**；仍用于混合中的 \(\gamma(\mathbf{z})\) 归一化，以及 `--use_delta_high_gate` 时的准入上界 |
 | `--annulus_min_samples` | `200` | 激活环带前最少累积 \(D_M\) 样本数 \(N_{\min}\) |
+
+> **Sweep（2026-07）**：`chi2_low∈{0,0.05,0.1,0.2}` 最优为 **0**（FG10 avg 70.35）；`chi2_high∈{0.8,0.9,0.95,none}`（固定 low=0）最优为 **none**（avg **70.37**）。详见 `BASELINE_SCORES.md`。
 
 ### 5.3 硬门控规则
 
-DQDA 参数就绪后，候选样本若满足以下任一则**拒绝准入**：
+DQDA 参数就绪后：
 
 \[
-D_M < \delta_{\text{low}} \quad \text{或} \quad D_M > \delta_{\text{high}}\ (\text{若启用上界})
+D_M < \delta_{\text{low}} \;\Rightarrow\; \textbf{拒绝准入}
 \]
+
+上界 \(D_M > \delta_{\text{high}}\) **默认关闭**（等同 sweep 中的 `none`）。若开启 `--use_delta_high_gate`，则额外拒绝 \(D_M > \delta_{\text{high}}\)。
 
 | 参数 | 默认值 | 含义 |
 |------|--------|------|
-| `--no_delta_high_gate` | `False` | 设为 `True` 时关闭上界门控，仅保留 \(D_M < \delta_{\text{low}}\) 拒绝 |
+| `--no_delta_high_gate` | `True` | 关闭准入上界门控（默认） |
+| `--use_delta_high_gate` | — | 打开上界门控（将 `no_delta_high_gate` 置为 `False`） |
 
 ### 5.4 满 bank 时的联合打分与淘汰
 
@@ -238,6 +243,8 @@ D_M(\mathbf{z}) = D_M(\mathbf{z},\, \arg\max_c \log p_L(\mathbf{z}\mid c))
 \text{mix}(c\mid\mathbf{z}) = \gamma\, P_L(c\mid\mathbf{z}) + (1-\gamma)\, P_S(c\mid\mathbf{z})
 \]
 
+> 注意：即使默认关闭准入上界门控，\(\gamma(\mathbf{z})\) 仍使用经验 \(\delta_{\text{high}}=Q_{\texttt{chi2\_high}}(D_M)\)（默认 `chi2_high=0.95`）做尺度归一化；若阈值未就绪则 \(\gamma\equiv 1\)。
+
 | 参数 | 默认值 | 含义 |
 |------|--------|------|
 | `--eta` | `0.75` | 门控强度 \(\eta\) |
@@ -299,7 +306,7 @@ flowchart TB
     end
 
     subgraph admit [准入]
-        Annulus["环带门控\nchi2_low/high, annulus_min_samples\nno_delta_high_gate"]
+        Annulus["环带门控\nchi2_low=0 (default)\nno_delta_high_gate=True\nchi2_high→γ 归一化"]
         Score["满 bank 打分\nlambda_div"]
         Bank["bank_size"]
     end
@@ -330,12 +337,17 @@ flowchart TB
 
 ## 9. 推荐起步配置
 
-与 `scripts/run_eurosat.sh` 一致的生产默认：
+与当前代码默认 + FG10 annulus 最优（`BASELINE_SCORES.md`，avg **70.37%**）一致：
 
 ```bash
---bank_size 16 --alpha 0.9 \
---var_aligned_kappa --ps_temperature 175 \
+--bank_size 16 --alpha 0.9 --batch_size 1 \
+--class_type Custom --GPT \
+--var_aligned_kappa --ps_temperature 40 \
 --eta 0.75 --rho 2.0 \
---chi2_low 0.05 --chi2_high 0.95 --annulus_min_samples 200 \
+--chi2_low 0 --annulus_min_samples 200 \
 --lambda_div 1.0
+# 默认已关闭准入 delta_high；如需打开上界：加 --use_delta_high_gate --chi2_high 0.95
 ```
+
+> 若沿用旧默认环带：`--chi2_low 0.05 --use_delta_high_gate --chi2_high 0.95`（07-11 baseline，avg 70.29%）。
+> `scripts/run_eurosat.sh` / 部分旧 launcher 仍可能写着 `chi2_low=0.05` 与显式 `chi2_high`；新实验请以本节为准。
